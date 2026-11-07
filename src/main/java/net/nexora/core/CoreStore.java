@@ -13,7 +13,7 @@ public final class CoreStore implements AutoCloseable {
         db = DriverManager.getConnection("jdbc:sqlite:" + file.toAbsolutePath());
         try (Statement s = db.createStatement()) {
             try(ResultSet version=s.executeQuery("PRAGMA user_version")){
-                if(version.next() && version.getInt(1)>1){db.close();throw new SQLException("Neuere Datenbankversion wird nicht verändert");}
+                if(version.next() && version.getInt(1)>2){db.close();throw new SQLException("Neuere Datenbankversion wird nicht verändert");}
             }
             s.execute("PRAGMA foreign_keys=ON");
             s.execute("PRAGMA busy_timeout=5000");
@@ -28,7 +28,18 @@ public final class CoreStore implements AutoCloseable {
             s.execute("CREATE TABLE IF NOT EXISTS sync_meta(id INTEGER PRIMARY KEY CHECK(id=1), sequence INTEGER NOT NULL)");
             s.execute("INSERT OR IGNORE INTO sync_meta(id,sequence) VALUES(1,0)");
             s.execute("CREATE TABLE IF NOT EXISTS dirty(uuid TEXT PRIMARY KEY)");
-            s.execute("PRAGMA user_version=1");
+            // Backup before adding shop schema or updating schema version.
+            int schema;
+            try(ResultSet v=s.executeQuery("PRAGMA user_version")){v.next();schema=v.getInt(1);}
+            if(schema<2){
+                try(PreparedStatement backup=db.prepareStatement("VACUUM INTO ?")){
+                    backup.setString(1,file.toAbsolutePath()+".pre-shop-"+UUID.randomUUID()+".bak");backup.execute();
+                }
+            }
+            s.execute("CREATE TABLE IF NOT EXISTS shop_products(id TEXT PRIMARY KEY,name TEXT NOT NULL,price INTEGER NOT NULL CHECK(price>=0),currency TEXT NOT NULL CHECK(currency IN ('coins','eur')),description TEXT NOT NULL DEFAULT '',category TEXT NOT NULL DEFAULT 'custom',active INTEGER NOT NULL DEFAULT 0,kind TEXT NOT NULL DEFAULT 'custom',reward TEXT NOT NULL DEFAULT '',revision INTEGER NOT NULL DEFAULT 1,deleted INTEGER NOT NULL DEFAULT 0)");
+            s.execute("CREATE TABLE IF NOT EXISTS shop_orders(id TEXT PRIMARY KEY,buyer TEXT NOT NULL REFERENCES accounts(uuid),product TEXT NOT NULL,revision INTEGER NOT NULL,price INTEGER NOT NULL,currency TEXT NOT NULL,status TEXT NOT NULL,kind TEXT NOT NULL,reward TEXT NOT NULL,delivery TEXT,payment_ref TEXT UNIQUE,created INTEGER NOT NULL,detail TEXT NOT NULL DEFAULT '')");
+            s.execute("CREATE TABLE IF NOT EXISTS shop_jobs(id TEXT PRIMARY KEY,actor TEXT NOT NULL,request TEXT NOT NULL,result TEXT NOT NULL)");
+            s.execute("PRAGMA user_version=2");
         }
     }
     @FunctionalInterface private interface Work<T> { T run() throws SQLException; }
@@ -129,6 +140,7 @@ public final class CoreStore implements AutoCloseable {
             }
             update("UPDATE deliveries SET state=? WHERE id=?",delivered?"delivered":"refunded",id);
             update("INSERT OR IGNORE INTO dirty(uuid) VALUES(?)",d.uuid());
+            update("UPDATE shop_orders SET status=CASE WHEN ? THEN 'fulfilled' WHEN currency='eur' THEN 'refund_required' ELSE 'refunded' END WHERE delivery=? AND status='delivering'",delivered,id);
             audit(actor,delivered?"delivery.complete":"delivery.refund",id);return null;
         });
     }
@@ -176,6 +188,163 @@ public final class CoreStore implements AutoCloseable {
         }return result;
     }
     public synchronized void acknowledge(String id) throws SQLException {update("DELETE FROM outbox WHERE id=?",id);}
+    public record ShopOrder(String id,String buyer,String product,long revision,long price,String currency,String status,String kind,String reward,String delivery,String paymentRef,long created,String detail) {}
+    @FunctionalInterface public interface ShopWork { void run() throws SQLException; }
+    public synchronized String ownerJob(String id,String actor,String request,ShopWork work) throws SQLException {
+        return transaction(()->{
+            try(PreparedStatement s=db.prepareStatement("SELECT actor,request,result FROM shop_jobs WHERE id=?")){
+                s.setString(1,id);try(ResultSet r=s.executeQuery()){
+                    if(r.next()){
+                        if(!r.getString(1).equals(actor) || !r.getString(2).equals(request))throw new IllegalArgumentException("Job-ID mit anderem Inhalt wiederverwendet");
+                        return r.getString(3);
+                    }
+                }
+            }
+            // work is productMutation(), which runs inside this transaction (no nested transaction).
+            work.run();update("INSERT INTO shop_jobs(id,actor,request,result) VALUES(?,?,?,?)",id,actor,request,"applied");
+            audit(actor,"shop.owner-job",id);return "applied";
+        });
+    }
+    public synchronized String jobResult(String id,String actor,String request) throws SQLException {
+        try(PreparedStatement s=db.prepareStatement("SELECT actor,request,result FROM shop_jobs WHERE id=?")){
+            s.setString(1,id);try(ResultSet r=s.executeQuery()){
+                if(!r.next())return null;
+                if(!r.getString(1).equals(actor) || !r.getString(2).equals(request))throw new IllegalArgumentException("Job-ID-Konflikt");return r.getString(3);
+            }
+        }
+    }
+    public synchronized List<ShopOrder> readyOrders(UUID buyer) throws SQLException {
+        List<ShopOrder> result=new ArrayList<>();
+        try(PreparedStatement s=db.prepareStatement("SELECT * FROM shop_orders WHERE buyer=? AND status='ready' ORDER BY rowid LIMIT 20")){
+            s.setString(1,buyer.toString());try(ResultSet r=s.executeQuery()){while(r.next())result.add(orderRow(r));}
+        }return result;
+    }
+    private ShopProduct productRow(ResultSet r) throws SQLException {
+        return new ShopProduct(r.getString("id"),r.getString("name"),r.getLong("price"),r.getString("currency"),r.getString("description"),r.getString("category"),r.getBoolean("active"),r.getString("kind"),r.getString("reward"),r.getLong("revision"),r.getBoolean("deleted"));
+    }
+    public synchronized ShopProduct product(String id) throws SQLException {
+        try(PreparedStatement s=db.prepareStatement("SELECT * FROM shop_products WHERE id=?")){
+            s.setString(1,id);try(ResultSet r=s.executeQuery()){return r.next()?productRow(r):null;}
+        }
+    }
+    public synchronized List<ShopProduct> products(int offset,int limit) throws SQLException {
+        if(offset<0 || limit<1 || limit>100)throw new IllegalArgumentException("Ungültige Seitengröße");
+        List<ShopProduct> result=new ArrayList<>();
+        try(PreparedStatement s=db.prepareStatement("SELECT * FROM shop_products ORDER BY rowid LIMIT ? OFFSET ?")){
+            s.setInt(1,limit);s.setInt(2,offset);try(ResultSet r=s.executeQuery()){while(r.next())result.add(productRow(r));}
+        }return result;
+    }
+    public void productChange(ShopProduct next,boolean create,long expected,String actor) throws SQLException {
+        transaction(()->{productMutation(next,create,expected,actor);return null;});
+    }
+    /** Called by normal productChange or ownerJob, always inside one transaction. */
+    public synchronized void productMutation(ShopProduct p,boolean create,long expected,String actor) throws SQLException {
+        ShopProduct.validId(p.id());ShopProduct.text(p.name(),80);ShopProduct.currency(p.currency());ShopProduct.kind(p.kind());
+        if(p.price()<0 || p.description()==null || p.description().length()>1024 || p.description().chars().anyMatch(Character::isISOControl)
+            || p.category()==null || !p.category().matches("[a-z0-9_-]{1,32}") || p.reward()==null || p.reward().length()>65536)
+            throw new IllegalArgumentException("Ungültige Produktdaten");
+        if(p.active() && (p.deleted() || p.reward().isBlank()))throw new IllegalArgumentException("Aktives Produkt benötigt eine konfigurierte Belohnung");
+        ShopProduct old=product(p.id());
+        if(create){
+            if(old!=null)throw new IllegalArgumentException("Produkt-ID existiert bereits (auch gelöschte IDs bleiben reserviert)");
+            update("INSERT INTO shop_products(id,name,price,currency,description,category,active,kind,reward) VALUES(?,?,?,?,?,?,?,?,?)",p.id(),p.name(),p.price(),p.currency(),p.description(),p.category(),p.active(),p.kind(),p.reward());
+        }else{
+            if(old==null || old.deleted())throw new IllegalArgumentException("Produkt existiert nicht");
+            if(old.revision()!=expected)throw new IllegalArgumentException("Produkt wurde inzwischen geändert; neu laden");
+            update("UPDATE shop_products SET name=?,price=?,currency=?,description=?,category=?,active=?,kind=?,reward=?,revision=revision+1,deleted=? WHERE id=?",p.name(),p.price(),p.currency(),p.description(),p.category(),p.active(),p.kind(),p.reward(),p.deleted(),p.id());
+        }
+        audit(actor,create?"shop.create":"shop.edit",p.id()+":"+p.price()+":"+p.currency());
+    }
+    private ShopOrder orderRow(ResultSet r) throws SQLException {
+        return new ShopOrder(r.getString("id"),r.getString("buyer"),r.getString("product"),r.getLong("revision"),r.getLong("price"),r.getString("currency"),r.getString("status"),r.getString("kind"),r.getString("reward"),r.getString("delivery"),r.getString("payment_ref"),r.getLong("created"),r.getString("detail"));
+    }
+    public synchronized ShopOrder order(String id) throws SQLException {
+        try(PreparedStatement s=db.prepareStatement("SELECT * FROM shop_orders WHERE id=?")){
+            s.setString(1,id);try(ResultSet r=s.executeQuery()){return r.next()?orderRow(r):null;}
+        }
+    }
+    public synchronized List<ShopOrder> orders(int offset,int limit) throws SQLException {
+        if(offset<0 || limit<1 || limit>100)throw new IllegalArgumentException("Ungültige Seitengröße");
+        List<ShopOrder> result=new ArrayList<>();
+        try(PreparedStatement s=db.prepareStatement("SELECT * FROM shop_orders ORDER BY rowid LIMIT ? OFFSET ?")){
+            s.setInt(1,limit);s.setInt(2,offset);try(ResultSet r=s.executeQuery()){while(r.next())result.add(orderRow(r));}
+        }return result;
+    }
+    public ShopOrder purchase(String orderId,UUID buyer,String productId,long revision,long price,String currency,String kind,String reward,String paymentRef) throws SQLException {
+        UUID.fromString(orderId);
+        return transaction(()->{
+            ShopOrder existing=order(orderId);
+            if(existing!=null){
+                if(!existing.buyer().equals(buyer.toString()) || !existing.product().equals(productId) || existing.revision()!=revision
+                    || existing.price()!=price || !existing.currency().equals(currency) || !Objects.equals(existing.paymentRef(),paymentRef))
+                    throw new IllegalArgumentException("Bestell-ID mit anderen Daten wiederverwendet");
+                return existing;
+            }
+            ShopProduct product=product(productId);
+            if(product==null || !product.active() || product.deleted())throw new IllegalArgumentException("Produkt ist nicht kaufbar");
+            if(product.revision()!=revision || product.price()!=price || !product.currency().equals(currency) || !product.kind().equals(kind))
+                throw new IllegalArgumentException("Preis oder Produktversion geändert; neue Bestellung erforderlich");
+            if(reward==null || reward.isBlank() || (!kind.equals("kit") && !product.reward().equals(reward)))throw new IllegalArgumentException("Belohnung stimmt nicht mit Produkt überein");
+            long before=balance(buyer);
+            if(currency.equals("eur")){
+                if(paymentRef==null || !paymentRef.matches("[a-zA-Z0-9_:.\\-]{1,160}"))throw new IllegalArgumentException("Geprüfte eindeutige Zahlungsreferenz erforderlich");
+            }else{
+                if(paymentRef!=null)throw new IllegalArgumentException("Coin-Bestellung darf keine Zahlungsreferenz enthalten");
+                if(before<price)throw new IllegalArgumentException("Zu wenig Coins");
+                update("UPDATE accounts SET coins=? WHERE uuid=?",before-price,buyer.toString());
+            }
+            update("INSERT INTO shop_orders(id,buyer,product,revision,price,currency,status,kind,reward,payment_ref,created) VALUES(?,?,?,?,?,?,'ready',?,?,?,?)",orderId,buyer.toString(),productId,revision,price,currency,kind,reward,paymentRef,System.currentTimeMillis());
+            update("INSERT OR IGNORE INTO dirty(uuid) VALUES(?)",buyer.toString());
+            audit(buyer.toString(),"shop.purchase",orderId+":"+productId+":"+price+":"+currency);
+            return order(orderId);
+        });
+    }
+    /** Claim external inventory/LP effect once. A crash leaves delivering for manual review. */
+    public boolean claimOrder(String id,String deliveryItems) throws SQLException {
+        return transaction(()->{
+            ShopOrder o=order(id);if(o==null || !o.status().equals("ready"))return false;
+            UUID buyer=UUID.fromString(o.buyer());
+            if(deliveryItems!=null){
+                if(!pending(buyer).isEmpty())throw new IllegalArgumentException("Offene Lieferung zuerst prüfen");
+                update("INSERT INTO deliveries(id,uuid,kind,price,items,previous_ready) VALUES(?,?,?,?,?,0)",id,o.buyer(),"shoporder:"+id,o.currency().equals("coins")?o.price():0,deliveryItems);
+            }
+            update("UPDATE shop_orders SET status='delivering',delivery=? WHERE id=?",deliveryItems==null?null:id,id);
+            audit("SYSTEM","shop.claim",id);return true;
+        });
+    }
+    public void finishOrder(String id,String actor) throws SQLException {
+        transaction(()->{
+            ShopOrder o=order(id);if(o==null || !o.status().equals("delivering"))throw new IllegalArgumentException("Keine laufende Bestellung");
+            if(o.delivery()!=null)throw new IllegalArgumentException("Inventarlieferung über Lieferungsjournal abschließen");
+            update("UPDATE shop_orders SET status='fulfilled' WHERE id=?",id);audit(actor,"shop.fulfilled",id);return null;
+        });
+    }
+    public void coinOrder(String id,long coins) throws SQLException {
+        if(coins<=0)throw new IllegalArgumentException("Positives Coin-Paket erforderlich");
+        transaction(()->{
+            ShopOrder o=order(id);if(o==null || !o.status().equals("ready"))return null;
+            if(!o.kind().equals("coins") || !o.reward().equals(Long.toString(coins)))throw new IllegalArgumentException("Falsche Belohnung");
+            long value=Math.addExact(balance(UUID.fromString(o.buyer())),coins);
+            update("UPDATE accounts SET coins=? WHERE uuid=?",value,o.buyer());
+            update("UPDATE shop_orders SET status='fulfilled' WHERE id=?",id);
+            update("INSERT OR IGNORE INTO dirty(uuid) VALUES(?)",o.buyer());audit("SYSTEM","shop.coins-delivered",id);return null;
+        });
+    }
+    public void reviewOrder(String id,boolean fulfilled,String actor) throws SQLException {
+        transaction(()->{
+            ShopOrder o=order(id);
+            if(o==null || !Set.of("ready","delivering").contains(o.status()) || o.delivery()!=null)throw new IllegalArgumentException("Keine manuell prüfbare Bestellung; Inventarlieferung über resolve prüfen");
+            if(!fulfilled){
+                if(o.currency().equals("coins")){
+                    long value=Math.addExact(balance(UUID.fromString(o.buyer())),o.price());
+                    update("UPDATE accounts SET coins=? WHERE uuid=?",value,o.buyer());
+                    update("INSERT OR IGNORE INTO dirty(uuid) VALUES(?)",o.buyer());
+                }
+            }
+            String state=fulfilled?"fulfilled":o.currency().equals("eur")?"refund_required":"refunded";
+            update("UPDATE shop_orders SET status=?,detail='owner-reviewed' WHERE id=?",state,id);audit(actor,"shop.review",id+":"+state);return null;
+        });
+    }
     public synchronized void backup(Path destination) throws SQLException {
         // VACUUM INTO creates a consistent independent backup including committed WAL changes.
         try(PreparedStatement s=db.prepareStatement("VACUUM INTO ?")){s.setString(1,destination.toAbsolutePath().toString());s.execute();}

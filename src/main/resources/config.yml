@@ -20,3 +20,20 @@ website-sync:
   # Enable only once Base44 implements docs/BASE44.md and validates acknowledgments.
   snapshot-v2: false
   server-id: ''
+
+shop:
+  # Existing LuckPerms groups only. Never list administrative groups here.
+  allowed-rank-groups: []
+  # Only harmless cosmetic feature permissions; no wildcards/admin permissions.
+  allowed-cosmetic-permissions: []
+shop-sync:
+  enabled: false
+  # No invented Base44 function name. Configure only an implemented adapter URL.
+  endpoint: ''
+  server-id: ''
+  # Prefer server environment variable NEXORA_SHOP_API_TOKEN.
+  token: ''
+  # Verified Base44 owner principal IDs; empty denies every remote management job.
+  owner-ids: []
+  # Enable only after provider-webhook verification and replay tests in Base44.
+  accept-paid-orders: false

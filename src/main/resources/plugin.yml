@@ -36,7 +36,7 @@ permissions:
   nexora.kits.manage:
     default: op
   nexora.shop.manage:
-    default: op
+    default: false
   nexora.ranks.manage:
     default: false
   nexora.owner.status:

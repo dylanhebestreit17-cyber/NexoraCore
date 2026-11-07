@@ -33,3 +33,18 @@ CI prüft außerdem JAR-Integrität, Hauptklasse, Java-25-Bytecode, Version/API-
 - [ ] Lasttest mit realistischem Inventar/Katalog/Joinaufkommen, DB-Schreibzeiten und Tickzeiten messen. Das Plugin wurde hier nicht als 1000-Spieler-Netzwerk lastgetestet.
 
 Offene Grenzen: kein Echtgeld-/PayPal-Shop, kein automatischer Web→Minecraft-Rechteimport, keine automatische Website-Coinmigration, keine gemeinsame DB-/Inventartransaktion. Keine Behauptung eines durchgeführten Live-Servertests.
+
+
+## Zusätzliche Shop-3.2-Prüfungen
+
+Automatisiert: exakte Cent-/Coin-Preise, ungültige/überlaufende Preise, sichere IDs/Texte, deaktivierte neue Produkte, Aktivierung ohne Belohnung, Versionskonflikte, Löschmarkierungen/Historie, unzureichendes Guthaben, manipulierte Preise/Belohnungen, doppelte Bestell-IDs, Zahlungsreferenzen, genau einmalige Coin-Pakete, Claim/Absturzstatus, Inventarjournal/Erstattung, keine lokalen Coins bei EUR-Erstattung, idempotente Owner-Aufträge und Rollback, wartende Bestellungen hinter mehr als 100 Historieneinträgen, Neustart und Schema-1-Migration mit Backup.
+
+Erforderliche reale Tests:
+
+- [ ] Alle fünf verlangten Konsolenbefehle mit echten eigenen Produkten ausprobieren, inklusive Leerzeichen im Namen, EUR-Cent und Coin-Ganzzahlen.
+- [ ] OP ohne `nexora.shop.manage` ablehnen; nur sichere Owner-UUID explizit berechtigen. Alte Coin-/Rangdaten vor/nach Migration vergleichen; `.pre-shop`-Backup prüfen.
+- [ ] Jede tatsächliche Belohnungsart, Item-Metadaten, volle Inventare, Offline-Bestellungen und LuckPerms-Vererbung auf Paper 26.3 testen.
+- [ ] API-Adapter gemäß SHOP-BASE44.md erst implementieren: Produktnamen/Preis/Beschreibung/Kategorie/Status wirklich auf Website prüfen. Owner-Panel darf fremde Nutzer und Browser-Manipulationen ablehnen; Bestellungen nur autorisiert sichtbar.
+- [ ] Tatsächliche Zahlungsanbieter-WebHooks und verifizierte Bestellungen testen; falsche Beträge, alte Revision, fremde UUID und wiederholte Zahlungsreferenzen dürfen nichts ausgeben. EUR-Annahme bis dahin deaktiviert lassen.
+- [ ] Absturz zwischen Coin-Reservierung, Inventar/LuckPerms und Abschluss testen. `delivering` benötigt manuelle Prüfung; `refund_required` erfordert echten Anbieterrefund, keine automatisch behauptete Rückzahlung.
+- [ ] Große Kataloge/Bestellhistorien: Seiten vollständig über mehrere Minutentakte, Löschmarkierungen und wiederholte Owner-Aufträge nach Neustart prüfen. Keine Echtzeit- oder 1000-Spieler-Lastgarantie.

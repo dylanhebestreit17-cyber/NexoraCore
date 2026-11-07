@@ -21,4 +21,9 @@ final class RankBridge {
             if(add)user.data().add(node);else user.data().remove(node);
         });
     }
+    boolean hasGroup(String group){return lp.getGroupManager().getGroup(group)!=null;}
+    CompletableFuture<Void> cosmetic(UUID uuid,String node){
+        return lp.getUserManager().modifyUser(uuid,user->user.data().add(net.luckperms.api.node.Node.builder(node).build()));
+    }
+
 }

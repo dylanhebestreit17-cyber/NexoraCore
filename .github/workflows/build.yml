@@ -50,7 +50,7 @@ jobs:
               assert jar.testzip() is None, 'Corrupt JAR'
               descriptor = jar.read('plugin.yml').decode('utf-8')
               assert "${version}" not in descriptor, 'Unresolved plugin version'
-              assert "version: '2.0.0'" in descriptor, 'Unexpected plugin version'
+              assert "version: '3.2.0'" in descriptor, 'Unexpected plugin version'
               assert "api-version: '26.3'" in descriptor, 'Wrong Paper API version'
               main = jar.read('net/nexora/core/NexoraCore.class')
               assert struct.unpack('>I', main[:4])[0] == 0xCAFEBABE

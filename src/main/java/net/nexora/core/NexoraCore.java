@@ -18,15 +18,16 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class NexoraCore extends JavaPlugin implements Listener {
-    private CoreStore store;
-    private RankBridge ranks;
+    CoreStore store;
+    RankBridge ranks;
     private volatile NexoraApiClient api;
+    private ShopController catalog;
     private final AtomicBoolean running=new AtomicBoolean();
     private final AtomicBoolean draining=new AtomicBoolean();
     private final Map<UUID,Long> webRequests=new HashMap<>();
-    private YamlConfiguration kits,shop;
+    YamlConfiguration kits,shop;
     private ThreadPoolExecutor http;
-    private boolean maintenance;
+    boolean maintenance;
 
     @Override public void onEnable(){
         try {
@@ -52,9 +53,11 @@ public final class NexoraCore extends JavaPlugin implements Listener {
                 if(registration!=null)ranks=new RankBridge(registration.getProvider());
             }
             configureApi();running.set(true);
+            catalog=new ShopController(this);
             getServer().getPluginManager().registerEvents(this,this);
             for(Player p:getServer().getOnlinePlayers())store.seen(p.getUniqueId(),p.getName(),System.currentTimeMillis());
             getServer().getScheduler().runTaskTimer(this,()->{
+                if(catalog!=null)catalog.tick();
                 if(getConfig().getBoolean("website-sync.enabled",false)){
                     try{if(getConfig().getBoolean("website-sync.snapshot-v2",false))for(UUID uuid:store.dirtyPlayers())queueSnapshot(uuid);}
                     catch(SQLException e){getLogger().warning("Sync-Markierungen konnten nicht gelesen werden");}
@@ -63,7 +66,7 @@ public final class NexoraCore extends JavaPlugin implements Listener {
                     drain();
                 }
             },100L,1200L);
-            getLogger().info("NexoraCore 2.0 gestartet. Coins-Modus: "+mode()+"; API konfiguriert: "+(api!=null));
+            getLogger().info("NexoraCore 3.2 gestartet. Coins-Modus: "+mode()+"; API konfiguriert: "+(api!=null));
         }catch(Exception e){
             getLogger().severe("Start abgebrochen; vorhandene Daten bleiben erhalten. Fehlerklasse: "+e.getClass().getSimpleName());
             getServer().getPluginManager().disablePlugin(this);
@@ -71,6 +74,7 @@ public final class NexoraCore extends JavaPlugin implements Listener {
     }
     @Override public void onDisable(){
         running.set(false);
+        if(catalog!=null)catalog.close();
         if(http!=null)http.shutdownNow();
         if(api!=null)api.close();
         if(store!=null)try{store.close();}catch(SQLException e){getLogger().severe("Datenbank konnte nicht geschlossen werden");}
@@ -102,17 +106,17 @@ public final class NexoraCore extends JavaPlugin implements Listener {
         }catch(RuntimeException e){getLogger().warning("API bleibt deaktiviert: HTTPS-Endpunkt und echten Token lokal prüfen");}
     }
     private String mode(){return getConfig().getString("economy.mode","web").toLowerCase(Locale.ROOT);}
-    private void local(){if(!mode().equals("local"))throw new IllegalArgumentException("Lokale Wirtschaft ist aus; bestehende Website-Coins bleiben getrennt");}
-    private void message(CommandSender sender,String text){
+    void local(){if(!mode().equals("local"))throw new IllegalArgumentException("Lokale Wirtschaft ist aus; bestehende Website-Coins bleiben getrennt");}
+    void message(CommandSender sender,String text){
         sender.sendMessage(ChatColor.translateAlternateColorCodes('&',getConfig().getString("prefix","&6NEXORA &8» ")+text));
     }
-    private void permission(CommandSender sender,String node){
+    void permission(CommandSender sender,String node){
         if(!(sender instanceof ConsoleCommandSender) && !sender.hasPermission(node))throw new IllegalArgumentException("Keine Berechtigung: "+node);
     }
-    private Player player(CommandSender sender){
+    Player player(CommandSender sender){
         if(!(sender instanceof Player p))throw new IllegalArgumentException("Nur im Spiel verfügbar");return p;
     }
-    private String actor(CommandSender sender){return sender instanceof Player p?p.getUniqueId().toString():"CONSOLE";}
+    String actor(CommandSender sender){return sender instanceof Player p?p.getUniqueId().toString():"CONSOLE";}
     private UUID target(String input) throws SQLException {
         Player p=getServer().getPlayerExact(input);
         UUID uuid=p==null?UUID.fromString(input):p.getUniqueId();
@@ -125,11 +129,11 @@ public final class NexoraCore extends JavaPlugin implements Listener {
         if(!value.matches("[0-9]{1,19}"))throw new IllegalArgumentException("Nichtnegative ganze Zahl erwartet");
         return Long.parseLong(value);
     }
-    private void main(Runnable work){
+    void main(Runnable work){
         if(running.get())try{getServer().getScheduler().runTask(this,()->{if(running.get())work.run();});}
         catch(org.bukkit.plugin.IllegalPluginAccessException ignored){}
     }
-    private void submit(Runnable work){
+    void submit(Runnable work){
         try{http.execute(work);}catch(RejectedExecutionException e){throw new IllegalArgumentException("Zu viele API-Anfragen, bitte später erneut versuchen");}
     }
     @EventHandler public void onLogin(PlayerLoginEvent event){
@@ -142,6 +146,7 @@ public final class NexoraCore extends JavaPlugin implements Listener {
             store.seen(p.getUniqueId(),p.getName(),System.currentTimeMillis());
             if(!store.pending(p.getUniqueId()).isEmpty())message(p,"&eEine offene Lieferung benötigt die Prüfung durch einen Owner.");
             if(getConfig().getBoolean("website-sync.sync-on-join",true))queueSnapshot(p.getUniqueId());
+            if(catalog!=null)catalog.deliverReady(p);
         }catch(SQLException e){getLogger().severe("Spielerdaten konnten nicht gespeichert werden");}
     }
     @EventHandler public void onQuit(PlayerQuitEvent event){
@@ -166,7 +171,7 @@ public final class NexoraCore extends JavaPlugin implements Listener {
         }else json.addProperty("platform",getServer().getOnlineMode()?"JAVA":"UNKNOWN");
         return json;
     }
-    private void queueSnapshot(UUID uuid){
+    void queueSnapshot(UUID uuid){
         if(store==null || !getConfig().getBoolean("website-sync.enabled",false))return;
         try{
             JsonObject payload=identity(uuid);
@@ -219,7 +224,7 @@ public final class NexoraCore extends JavaPlugin implements Listener {
             String result=text;main(()->{Player online=getServer().getPlayer(uuid);if(online!=null)message(online,result);});
         });
     }
-    private List<ItemStack> catalogItems(YamlConfiguration catalog,String path){
+    List<ItemStack> catalogItems(YamlConfiguration catalog,String path){
         List<?> list=catalog.getList(path,List.of());List<ItemStack> items=new ArrayList<>();
         for(Object entry:list){
             if(!(entry instanceof ItemStack item) || item.getType().isAir() || item.getAmount()<=0)throw new IllegalArgumentException("Ungültiger Katalogeintrag");
@@ -283,7 +288,13 @@ public final class NexoraCore extends JavaPlugin implements Listener {
                     if(rank==null)web(p,"rank.get");else message(p,"&fLuckPerms-Hauptgruppe: &e"+rank);
                 }
                 case "kit" -> kit(player(sender),args);
-                case "shop" -> shop(player(sender),args);
+                case "shop" -> {
+                    Player p=player(sender);
+                    if(args.length==2 && args[0].equalsIgnoreCase("buy") && store.product(args[1])!=null)catalog.buy(p,args[1]);
+                    else if(args.length==2 && args[0].equalsIgnoreCase("page"))catalog.listPlayer(p,Integer.parseInt(args[1]));
+                    else if(args.length==0){catalog.listPlayer(p);shop(p,args);}
+                    else shop(p,args);
+                }
                 case "nexora" -> admin(sender,args);
                 default -> {return false;}
             }
@@ -305,11 +316,12 @@ public final class NexoraCore extends JavaPlugin implements Listener {
     private void admin(CommandSender sender,String[] args) throws Exception {
         String sub=args.length==0?"info":args[0].toLowerCase(Locale.ROOT);
         switch(sub){
-            case "info" -> message(sender,"&fNexoraCore 2.0 | Coins: "+mode()+" | API konfiguriert: "+(api!=null)+" | LuckPerms: "+(ranks!=null));
+            case "shop" -> catalog.manage(sender,Arrays.copyOfRange(args,1,args.length));
+            case "info" -> message(sender,"&fNexoraCore 3.2 | Coins: "+mode()+" | API konfiguriert: "+(api!=null)+" | LuckPerms: "+(ranks!=null));
             case "reload" -> {
                 permission(sender,"nexora.admin");
                 YamlConfiguration verified=new YamlConfiguration();verified.load(new File(getDataFolder(),"config.yml"));
-                loadCatalogs();reloadConfig();configureApi();maintenance=getConfig().getBoolean("maintenance.enabled",false);
+                loadCatalogs();reloadConfig();configureApi();if(catalog!=null)catalog.reload();maintenance=getConfig().getBoolean("maintenance.enabled",false);
                 store.audit(actor(sender),"config.reload","success");message(sender,"&aKonfiguration neu geladen; API-Anmeldung damit noch nicht bestätigt.");
             }
             case "sync" -> {permission(sender,"nexora.admin");Player p=player(sender);

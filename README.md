@@ -1,11 +1,56 @@
-# NexoraCore 2.0
+# NexoraCore 3.2
 
 Minecraft-Plugin für Paper **26.3 Build 244** und **Java 25**, mit lokalem Coin-Ledger, Kits, Coin-Item-Shop, optionaler LuckPerms-Verwaltung und HTTPS-Synchronisierung. Keine Echtgeldzahlungen, keine automatische Vergabe von Owner-Rechten anhand eines Spielernamens.
 
-## Installation / Update von 1.2
+
+## Shop-Verwaltung 3.2
+
+Neue Shopdaten werden in derselben SQLite-Datenbank ergänzt; vor Schemaänderungen wird ein konsistentes `.pre-shop-<UUID>.bak` angelegt. Bestehende Konten, Ränge, Spielerdateien und `shop.yml`-Angebote werden nicht gelöscht oder neu befüllt. Neue und alte Item-Angebote bleiben unterscheidbar; neue IDs dürfen bestehende Legacy-IDs nicht überdecken. Gelöschte neue IDs bleiben für die Historie reserviert.
+
+Nur Serverkonsole bzw. ausdrücklich berechtigte Owner mit **`nexora.shop.manage`** dürfen Produkte verwalten. Dieses Recht ist ab 3.2 standardmäßig **false**, auch für OP; explizit mit LuckPerms an vertrauenswürdige Owner vergeben. Das bisherige `nexora.admin` allein reicht nicht.
+
+Konsolenbefehle (ohne `/`):
+
+```text
+nexora shop create <id> <name mit Leerzeichen> <preis> <coins|eur>
+nexora shop list [seite]
+nexora shop delete <id>
+nexora shop price <id> <preis>
+nexora shop sync
+nexora shop set <id> <name|description|category> <text>
+nexora shop reward <id> <item|custom|kit|rank|coins|cosmetic> [wert]
+nexora shop enable <id>
+nexora shop disable <id>
+nexora shop orders [seite]
+nexora shop review <bestell-uuid> <fulfilled|refund>
+```
+
+Erstelle Produkte mit deinen tatsächlichen Namen und Preisen. EUR unterstützt bis zu zwei Nachkommastellen (Punkt oder Komma); Coins sind ganze Zahlen. Preise sind serverseitig validiert, nichtnegative exakte Ganzzahlen. Neue Produkte sind zunächst deaktiviert und haben keine erfundene Belohnung.
+
+Belohnungen:
+
+| Art | Wert / Einrichtung |
+| --- | --- |
+| `rank` | Existierende LuckPerms-Gruppen-ID für VIP-/andere kaufbare Ränge; zusätzlich in `shop.allowed-rank-groups` freigeben |
+| `kit` | Bereits wirklich konfiguriertes Kit aus `kits.yml`; Items werden beim Kauf als Snapshot gespeichert |
+| `coins` | Positiver ganzer Coin-Betrag; ausschließlich lokale Wirtschaft |
+| `cosmetic` | Wirklich existierendes Funktionsrecht, zusätzlich in `shop.allowed-cosmetic-permissions` freigeben; LuckPerms nötig |
+| `item` / `custom` | Exakte Kopie des gehaltenen Stapels; Befehl muss im Spiel von berechtigtem Owner ausgeführt werden |
+
+Kosmetikprodukte schalten freigegebene Rechte frei; sie erzeugen keine neuen Partikel-/Haustier-/Skinfunktionen. Die tatsächliche kosmetische Funktion muss vom Server unterstützt werden. Keine Wildcards, keine frei ausführbaren Belohnungs-/Konsolenbefehle, keine geratenen Rangrechte. Nach Belohnungsänderung muss das Produkt erneut aktiviert werden. Beschreibungen und Kategorien separat setzen; Kategorien sind sichere IDs.
+
+Spieler: `/shop` zeigt die erste Seite neuer Produkte und bestehende Gegenstandsangebote, `/shop page <seite>` weitere neue Produkte, `/shop buy <id>` kauft aktive Coin-Produkte. Neue Produkte werden beim Bezahlen nochmals gegen DB-Preis, Version und Aktivierung geprüft. EUR-Käufe benötigen den echten Website-Zahlungsweg und die explizit aktivierte, geprüfte Adapterintegration. Es gibt keinen ungeprüften `paid`-Konsolenbefehl.
+
+Bestellungen speichern Preis, Währung, Produktversion, Ziel-UUID und Belohnung dauerhaft. Dieselbe externe Bestell-ID bzw. Zahlungsreferenz kann keine zweite Belohnung auslösen. Coin-Pakete werden zusammen mit dem Erfüllungsstatus atomar gebucht. Bei Item-/LuckPerms-Abstürzen bleibt die Bestellung zur manuellen Owner-Prüfung offen; keine automatische Wiederholung mit Duplikationsrisiko.
+
+Bestehendes `/nexora shop-add` funktioniert weiter, benötigt aber ebenfalls das explizite Shop-Verwaltungsrecht. Seine `shop.yml`-Angebote bleiben lokale Legacy-Item-Angebote; sie werden nicht stillschweigend als neue Website-Produkte ausgegeben. Erstelle passende neue, getrennte Produkt-IDs, wenn sie auf der Website erscheinen sollen.
+
+**Website/Owner-Panel:** Der neue Adapter ist standardmäßig aus. Automatische Seitensynchronisierung erfolgt nach Konfiguration im Minutentakt. Die tatsächliche Base44-Anpassung und alle Felder/Zustände sind in [docs/SHOP-BASE44.md](docs/SHOP-BASE44.md) spezifiziert. Im Repository ist keine fertige Base44-App enthalten; Website- und Zahlungstests stehen aus. Das Plugin setzt keine nicht belegte vorhandene Shop-API voraus.
+
+## Installation / Update von 1.2 / 2.0
 
 1. Server stoppen. Den gesamten Ordner `plugins/NexoraCore/` und die Spielerwelten/Inventare sichern.
-2. Alte NexoraCore-JAR entfernen und nur die neue `NexoraCore-2.0.0.jar` in `plugins/` legen. Java 25 verwenden.
+2. Alte NexoraCore-JAR entfernen und nur die neue `NexoraCore-3.2.0.jar` in `plugins/` legen. Java 25 verwenden.
 3. Server starten. `players.yml` und vorhandene `config.yml` werden nicht migriert oder überschrieben. NexoraCore erstellt eine Originalkopie der alten Spielerdatei und eine separate SQLite-Datenbank `nexora.db`. Ungültige YAML-Dateien stoppen den Pluginstart statt Daten zurückzusetzen.
 4. LuckPerms separat installieren, falls Ränge genutzt werden. Geyser/Floodgate bleiben separate Plugins. Keine Minecraft-/Website-Identitäten oder Rechte werden geraten.
 5. `/nexora info` und `/nexora status` prüfen. API „konfiguriert“ bedeutet nicht, dass ein erfolgreicher API-Login/Sync nachgewiesen ist.
@@ -40,7 +85,7 @@ Wer von Website-Coins auf lokale Coins wechseln will, muss zuerst den tatsächli
 | `/nexora pending` | Erste 50 ungeklärte Lieferungen anzeigen | `nexora.owner.deliveries` |
 | `/nexora resolve <Transaktions-UUID> delivered\|refund` | Geprüfte Lieferung abschließen/erstatten | `nexora.owner.deliveries` |
 
-Einfache Spielerrechte sind standardmäßig erlaubt. Coin-/Katalogverwaltung und bisheriges `nexora.admin` sind standardmäßig OP. Wartungsänderungen, Rangänderungen, Lieferungsauflösung und Wartungs-Bypass sind standardmäßig **nicht** erlaubt und müssen separat an vertrauenswürdige Personen vergeben werden. Die echte Serverkonsole darf administrative Befehle ausführen. `nexora.admin` allein erteilt keine neuen Owner-Rechte. `nexora.maintenance.bypass` vor Aktivierung der Wartung an zuständige Owner vergeben. Bereits verbundene Spieler werden nicht automatisch gekickt.
+Einfache Spielerrechte sind standardmäßig erlaubt. Coin-/Kitverwaltung und bisheriges `nexora.admin` sind standardmäßig OP; Shopverwaltung benötigt ab 3.2 ein explizites Recht. Wartungsänderungen, Rangänderungen, Lieferungsauflösung und Wartungs-Bypass sind standardmäßig **nicht** erlaubt und müssen separat an vertrauenswürdige Personen vergeben werden. Die echte Serverkonsole darf administrative Befehle ausführen. `nexora.admin` allein erteilt keine neuen Owner-Rechte. `nexora.maintenance.bypass` vor Aktivierung der Wartung an zuständige Owner vergeben. Bereits verbundene Spieler werden nicht automatisch gekickt.
 
 Online-Namen werden nur aus aktuellen Verbindungen aufgelöst; für offline bekannte Spieler UUID verwenden. Es gibt keine geratene Offline-UUID anhand eines Namens.
 
@@ -70,6 +115,6 @@ API-Token ausschließlich als Server-Umgebungsvariable `NEXORA_API_TOKEN` oder i
 
 Temurin **25**, Gradle **9.2.1**: `gradle --no-daemon clean build`.
 
-GitHub Actions führt JUnit-Tests und JAR-Prüfung aus und stellt **NexoraCore-Paper26.3-Java25** sowie **NexoraCore-Testberichte** bereit. Das Plugin liegt unter `build/libs/NexoraCore-2.0.0.jar`. SQLite/Gson sind gebündelt, Paper/LuckPerms-API werden nicht eingebettet. Unter Actions einen erfolgreichen Lauf öffnen, Artefakt laden und ZIP entpacken; ausschließlich die JAR in `plugins/` legen.
+GitHub Actions führt JUnit-Tests und JAR-Prüfung aus und stellt **NexoraCore-Paper26.3-Java25** sowie **NexoraCore-Testberichte** bereit. Das Plugin liegt unter `build/libs/NexoraCore-3.2.0.jar`. SQLite/Gson sind gebündelt, Paper/LuckPerms-API werden nicht eingebettet. Unter Actions einen erfolgreichen Lauf öffnen, Artefakt laden und ZIP entpacken; ausschließlich die JAR in `plugins/` legen.
 
 Automatisierte Prüfungen und erforderliche Servertests: [docs/TESTS.md](docs/TESTS.md).
