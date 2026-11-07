@@ -1,0 +1,38 @@
+plugins {
+    id 'java'
+}
+
+group = 'net.nexora'
+version = '1.2.0'
+
+repositories {
+    mavenCentral()
+    maven { url = 'https://repo.papermc.io/repository/maven-public/' }
+}
+
+dependencies {
+    compileOnly 'io.papermc.paper:paper-api:26.3.build.244-stable'
+    implementation 'com.google.code.gson:gson:2.11.0'
+}
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(25) }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 25
+}
+
+processResources {
+    filesMatching('plugin.yml') { expand(version: project.version) }
+}
+
+jar {
+    archiveFileName = "NexoraCore-${project.version}.jar"
+    from { configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) } }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    exclude 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA'
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}

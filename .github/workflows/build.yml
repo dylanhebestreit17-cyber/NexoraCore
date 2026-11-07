@@ -1,0 +1,68 @@
+name: Build NexoraCore
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Paper 26.3 / Java 25
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          gradle-version: '9.2.1'
+
+      - name: Compile and check
+        run: gradle --no-daemon --console=plain clean build
+
+      - name: Verify plugin JAR
+        shell: python
+        run: |
+          import pathlib
+          import struct
+          import zipfile
+
+          jars = list(pathlib.Path('build/libs').glob('*.jar'))
+          assert len(jars) == 1, f'Expected one installable JAR, found {len(jars)}'
+          with zipfile.ZipFile(jars[0]) as jar:
+              assert jar.testzip() is None, 'Corrupt JAR'
+              descriptor = jar.read('plugin.yml').decode('utf-8')
+              assert "${version}" not in descriptor, 'Unresolved plugin version'
+              assert "version: '1.2.0'" in descriptor, 'Unexpected plugin version'
+              assert "api-version: '26.3'" in descriptor, 'Wrong Paper API version'
+              main = jar.read('net/nexora/core/NexoraCore.class')
+              assert struct.unpack('>I', main[:4])[0] == 0xCAFEBABE
+              assert struct.unpack('>H', main[6:8])[0] == 69, 'Expected Java 25 bytecode'
+              assert 'com/google/gson/JsonObject.class' in jar.namelist(), 'Missing Gson'
+              assert not any(p.startswith('org/bukkit/') for p in jar.namelist()), 'Paper API must not be bundled'
+          print(f'Verified {jars[0].name}')
+
+      - name: Upload installable plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: NexoraCore-Paper26.3-Java25
+          path: build/libs/NexoraCore-*.jar
+          if-no-files-found: error
+          retention-days: 14

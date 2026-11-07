@@ -1,0 +1,10 @@
+prefix: '&6&lNEXORA &8» '
+website-sync:
+  enabled: false
+  endpoint: 'https://infestedlands.base44.app/functions/nexoraApi'
+  token: ''
+  # Antwortformate sind noch nicht vollständig dokumentiert.
+  # Deshalb werden Werte nicht automatisch lokal überschrieben.
+  sync-on-join: true
+  connect-timeout-seconds: 5
+  request-timeout-seconds: 8

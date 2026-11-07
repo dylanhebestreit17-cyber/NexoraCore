@@ -1,0 +1,17 @@
+name: NexoraCore
+version: '${version}'
+main: net.nexora.core.NexoraCore
+api-version: '26.3'
+author: Nexora Network
+softdepend: [floodgate, Geyser-Spigot]
+commands:
+  nexora:
+    description: NexoraCore-Verwaltung
+    usage: /nexora [info|reload|sync]
+  coins:
+    description: Coins anzeigen
+  rank:
+    description: Rang anzeigen
+permissions:
+  nexora.admin:
+    default: op

@@ -1,0 +1,12 @@
+.gradle/
+build/
+.idea/
+*.iml
+.env
+.env.*
+!.env.example
+# Local Minecraft server data and credentials
+run/
+server/
+plugins/
+logs/
