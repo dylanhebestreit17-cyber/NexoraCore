@@ -1,0 +1,4 @@
+# Create actual kits with /nexora kit-save <id> <cooldown-seconds>.
+# Takes copies of storage inventory contents, excluding armor/offhand.
+# Grant nexora.kit AND nexora.kit.<id> to eligible players.
+kits: {}

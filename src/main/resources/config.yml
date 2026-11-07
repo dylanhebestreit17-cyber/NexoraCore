@@ -1,10 +1,22 @@
 prefix: '&6&lNEXORA &8» '
+# New installations use local coins. Existing v1 config files stay untouched:
+# if economy.mode is absent, NexoraCore uses web to preserve /coins behavior.
+economy:
+  mode: local
+maintenance:
+  enabled: false
+ranks:
+  # Empty intentionally. Only existing LuckPerms groups explicitly listed here
+  # can be modified; the command also requires nexora.ranks.group.<group>.
+  manageable-groups: []
 website-sync:
   enabled: false
   endpoint: 'https://infestedlands.base44.app/functions/nexoraApi'
+  # Prefer the server environment variable NEXORA_API_TOKEN. Never commit secrets.
   token: ''
-  # Antwortformate sind noch nicht vollständig dokumentiert.
-  # Deshalb werden Werte nicht automatisch lokal überschrieben.
   sync-on-join: true
   connect-timeout-seconds: 5
   request-timeout-seconds: 8
+  # Enable only once Base44 implements docs/BASE44.md and validates acknowledgments.
+  snapshot-v2: false
+  server-id: ''

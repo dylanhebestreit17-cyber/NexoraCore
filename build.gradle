@@ -3,7 +3,7 @@ plugins {
 }
 
 group = 'net.nexora'
-version = '1.2.0'
+version = '2.0.0'
 
 repositories {
     mavenCentral()
@@ -13,6 +13,11 @@ repositories {
 dependencies {
     compileOnly 'io.papermc.paper:paper-api:26.3.build.244-stable'
     implementation 'com.google.code.gson:gson:2.11.0'
+    implementation 'org.xerial:sqlite-jdbc:3.49.1.0'
+    compileOnly 'net.luckperms:api:5.4'
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 java {
@@ -35,4 +40,9 @@ jar {
     exclude 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA'
     preserveFileTimestamps = false
     reproducibleFileOrder = true
+}
+
+test {
+    useJUnitPlatform()
+    testLogging { events 'passed', 'skipped', 'failed' }
 }

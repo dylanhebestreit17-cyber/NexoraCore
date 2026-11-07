@@ -3,15 +3,51 @@ version: '${version}'
 main: net.nexora.core.NexoraCore
 api-version: '26.3'
 author: Nexora Network
-softdepend: [floodgate, Geyser-Spigot]
+softdepend: [LuckPerms, floodgate, Geyser-Spigot]
 commands:
   nexora:
     description: NexoraCore-Verwaltung
-    usage: /nexora [info|reload|sync]
+    usage: /nexora info
   coins:
-    description: Coins anzeigen
+    description: Lokale oder Website-Coins anzeigen und lokal verwalten
+  pay:
+    description: Lokale Coins überweisen
   rank:
-    description: Rang anzeigen
+    description: LuckPerms-Hauptgruppe oder Website-Rang anzeigen
+  kit:
+    description: Kits auflisten und abholen
+  shop:
+    description: Gegenstände mit lokalen Coins kaufen
 permissions:
+  nexora.coins:
+    default: true
+  nexora.pay:
+    default: true
+  nexora.rank:
+    default: true
+  nexora.kit:
+    default: true
+  nexora.shop:
+    default: true
   nexora.admin:
     default: op
+  nexora.coins.admin:
+    default: op
+  nexora.kits.manage:
+    default: op
+  nexora.shop.manage:
+    default: op
+  nexora.ranks.manage:
+    default: false
+  nexora.owner.status:
+    default: op
+  nexora.owner.maintenance:
+    default: false
+  nexora.owner.backup:
+    default: op
+  nexora.owner.audit:
+    default: op
+  nexora.owner.deliveries:
+    default: false
+  nexora.maintenance.bypass:
+    default: false

@@ -1,0 +1,3 @@
+# /nexora shop-add <id> <coin-price> copies the item stack in your main hand.
+# Coin item purchases only; no real-money payments or arbitrary console commands.
+offers: {}

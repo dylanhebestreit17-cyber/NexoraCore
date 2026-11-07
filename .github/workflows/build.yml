@@ -50,12 +50,15 @@ jobs:
               assert jar.testzip() is None, 'Corrupt JAR'
               descriptor = jar.read('plugin.yml').decode('utf-8')
               assert "${version}" not in descriptor, 'Unresolved plugin version'
-              assert "version: '1.2.0'" in descriptor, 'Unexpected plugin version'
+              assert "version: '2.0.0'" in descriptor, 'Unexpected plugin version'
               assert "api-version: '26.3'" in descriptor, 'Wrong Paper API version'
               main = jar.read('net/nexora/core/NexoraCore.class')
               assert struct.unpack('>I', main[:4])[0] == 0xCAFEBABE
               assert struct.unpack('>H', main[6:8])[0] == 69, 'Expected Java 25 bytecode'
               assert 'com/google/gson/JsonObject.class' in jar.namelist(), 'Missing Gson'
+              assert 'org/sqlite/JDBC.class' in jar.namelist(), 'Missing SQLite'
+              assert not any(p.startswith('net/luckperms/') for p in jar.namelist()), 'LuckPerms API must not be bundled'
+              assert "token: ''" in jar.read('config.yml').decode(), 'Default token must be empty'
               assert not any(p.startswith('org/bukkit/') for p in jar.namelist()), 'Paper API must not be bundled'
           print(f'Verified {jars[0].name}')
 
@@ -65,4 +68,15 @@ jobs:
           name: NexoraCore-Paper26.3-Java25
           path: build/libs/NexoraCore-*.jar
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NexoraCore-Testberichte
+          path: |
+            build/reports/tests/test/
+            build/test-results/test/
+          if-no-files-found: ignore
           retention-days: 14
